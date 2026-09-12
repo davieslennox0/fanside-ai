@@ -173,7 +173,15 @@ app.get("/api/config", (_req, res) => {
   });
 });
 
-app.use(express.static(path.join(__dirname, "..", "site")));
+// This site iterates fast during the hackathon — no client-side caching at
+// all, so a redeploy is never masked by a stale browser copy of html/css/js.
+app.use(
+  express.static(path.join(__dirname, "..", "site"), {
+    etag: false,
+    lastModified: false,
+    setHeaders: (res) => res.setHeader("Cache-Control", "no-store"),
+  }),
+);
 
 app.listen(PORT, () => {
   console.log(`fanside-ai listening on :${PORT} (domain: ${DOMAIN_NAME}, network: ${NETWORK}, seller: ${sellerAddress})`);
