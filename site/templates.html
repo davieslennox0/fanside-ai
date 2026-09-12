@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Templates — Fanside AI</title>
+<link rel="stylesheet" href="/style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="nav">
+  <div class="brand"><span class="dot"></span> Fanside AI</div>
+  <nav class="links">
+    <a href="/">Home</a>
+    <a href="/how-it-works.html">How it works</a>
+    <a href="/templates.html" class="active">Templates</a>
+    <a href="/dashboard.html">Dashboard</a>
+    <a href="https://github.com/davieslennox0/fanside-ai" target="_blank">GitHub ↗</a>
+  </nav>
+</header>
+
+<main>
+  <h1 style="margin-bottom:4px">Query templates</h1>
+  <p style="color:var(--text-dim); margin-top:0">
+    A small "mini Dune": curated queries against The Graph, each priced and payable via x402. A template
+    only becomes runnable here once it's been confirmed against real live Subgraph MCP data — see
+    <code>scripts/verify-templates.mjs</code>. Charts below only ever show a template's actual last real
+    paid run; nothing is seeded or faked.
+  </p>
+
+  <div class="grid" id="template-grid" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));">
+    <div class="card">Loading templates…</div>
+  </div>
+</main>
+
+<footer>
+  Fanside AI · Open source · <a href="https://github.com/davieslennox0/fanside-ai">github.com/davieslennox0/fanside-ai</a>
+</footer>
+
+<script>
+const charts = {};
+
+function renderCard(t) {
+  const statusBadge = t.verified
+    ? '<span class="tier-badge tier-simple">verified</span>'
+    : '<span class="tier-badge tier-composition">pending live verification</span>';
+
+  const chartOrEmpty = t.latestResult
+    ? `<canvas id="chart-${t.id}" height="160"></canvas>
+       <p style="color:var(--text-dim); font-size:0.8rem; margin:8px 0 0">
+         Last run ${new Date(t.latestResult.timestamp).toLocaleString()} · subgraph:
+         ${t.latestResult.subgraphUsed.name}
+       </p>`
+    : `<p style="color:var(--text-dim); font-size:0.85rem">No real run yet — this chart will populate the first time
+        someone pays for this template.</p>`;
+
+  return `
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:start; gap:8px">
+        <h3 style="margin:0">${t.name}</h3>
+        ${statusBadge}
+      </div>
+      <p style="color:var(--text-dim); font-size:0.9rem">${t.description}</p>
+      <p><strong>$${t.price}</strong> per run · reuses the x402 gate's own pricing tiers</p>
+      ${chartOrEmpty}
+      ${t.verified
+        ? `<pre style="margin-top:12px">curl -i -X POST https://<span class="domain">DOMAIN</span>/api/template/${t.id} \\
+  -H "Content-Type: application/json" -d '{}'
+# or: npm run e2e-template-run -- ${t.id}</pre>`
+        : ""}
+    </div>
+  `;
+}
+
+async function load() {
+  const [templates, config] = await Promise.all([
+    fetch("/api/templates").then(r => r.json()),
+    fetch("/api/config").then(r => r.json()),
+  ]);
+
+  const grid = document.getElementById("template-grid");
+  grid.innerHTML = templates.map(renderCard).join("");
+  grid.querySelectorAll(".domain").forEach(el => el.textContent = config.domain);
+
+  for (const t of templates) {
+    if (!t.latestResult) continue;
+    const ctx = document.getElementById(`chart-${t.id}`);
+    if (!ctx) continue;
+    charts[t.id] = new Chart(ctx, {
+      type: t.chartType,
+      data: {
+        labels: t.latestResult.result.labels,
+        datasets: [{
+          label: t.latestResult.result.seriesLabel,
+          data: t.latestResult.result.values,
+          borderColor: "#7c5cff",
+          backgroundColor: t.chartType === "bar" ? "#7c5cff" : "rgba(124,92,255,0.15)",
+          fill: t.chartType === "line",
+          tension: 0.3,
+        }],
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#9498b8" }, grid: { color: "#262b45" } },
+          y: { ticks: { color: "#9498b8" }, grid: { color: "#262b45" } },
+        },
+      },
+    });
+  }
+}
+
+load().catch(err => {
+  document.getElementById("template-grid").innerHTML =
+    `<div class="card" style="color:var(--danger)">Failed to load templates: ${err.message}</div>`;
+});
+</script>
+</body>
+</html>

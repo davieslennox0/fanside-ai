@@ -8,6 +8,9 @@ import { resourceServer, sellerAddress, NETWORK } from "./facilitator.js";
 import { classifyComplexity } from "./pricing.js";
 import { answerQuestion } from "./agent.js";
 import { logActivity, getActivity, getStats } from "./activity.js";
+import { TEMPLATES } from "./templates.js";
+import { runTemplate } from "./templateRunner.js";
+import { saveTemplateResult, getLatestResults } from "./templateResults.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4050);
@@ -40,6 +43,21 @@ const routes: RoutesConfig = {
       "receives { answer, tier, price, subgraphs_used, raw_results }. See /how-it-works for the machine-readable contract.",
   },
 };
+
+// Only verified templates (confirmed against live Subgraph MCP data via
+// scripts/verify-templates.mjs) are made payable — an unverified template
+// stays visible on the templates page but can't be charged for yet.
+for (const template of TEMPLATES.filter((t) => t.verified)) {
+  routes[`/api/template/${template.id}`] = {
+    accepts: {
+      scheme: "exact",
+      network: NETWORK,
+      payTo: sellerAddress,
+      price: template.price,
+    },
+    description: `${template.name} — ${template.description}`,
+  };
+}
 
 const app = express();
 app.use(express.json());
@@ -89,6 +107,40 @@ async function handleQuestion(req: Request, res: Response, caller: "human" | "ag
 
 app.post("/api/ask", (req, res) => handleQuestion(req, res, "human"));
 app.post("/api/agent/query", (req, res) => handleQuestion(req, res, "agent"));
+
+for (const template of TEMPLATES.filter((t) => t.verified)) {
+  app.post(`/api/template/${template.id}`, async (req, res) => {
+    try {
+      const run = await runTemplate(template.id, req.body ?? {});
+      const entry = {
+        templateId: template.id,
+        timestamp: new Date().toISOString(),
+        subgraphUsed: run.subgraphUsed,
+        result: run.result,
+      };
+      await saveTemplateResult(entry);
+      res.json({ ...entry, chartType: template.chartType, price_usdc: template.price });
+    } catch (err) {
+      console.error(err);
+      res.status(502).json({ error: "Failed to run template", detail: (err as Error).message });
+    }
+  });
+}
+
+app.get("/api/templates", async (_req, res) => {
+  const latest = await getLatestResults();
+  res.json(
+    TEMPLATES.map((t) => ({
+      id: t.id,
+      name: t.name,
+      description: t.description,
+      chartType: t.chartType,
+      price: t.price,
+      verified: t.verified,
+      latestResult: latest[t.id] ?? null,
+    })),
+  );
+});
 
 // --- Dashboard / site data API (free, unauthenticated reads) ---
 app.get("/api/stats", async (_req, res) => {

@@ -54,10 +54,17 @@ server/
   synth.ts           Groq calls: (a) NL question + schema -> GraphQL, (b) raw results -> NL answer
   agent.ts           orchestrates one paid question end to end
   activity.ts        append-only local log backing the dashboard's charts/table
+  templates.ts        curated "mini Dune" query templates + verified flag
+  templateRunner.ts    runs one template end to end (subgraph pick -> query -> transform)
+  templateResults.ts   stores each template's latest REAL run for the templates page
   index.ts           Express app: payment-gated routes + dashboard API + static site
+scripts/
+  verify-templates.mjs   unpaid, direct-to-MCP check of every template's real data
+  e2e-template-run.mjs   full paid run of one template via the live x402 gate
 site/
   index.html          landing
   how-it-works.html   pipeline explainer + agent-facing API contract
+  templates.html       curated query templates, priced + payable, real charts only
   dashboard.html       live charts (query volume, tier distribution) + activity table
 ```
 
@@ -82,6 +89,39 @@ includes `subgraphs_used` and `raw_results`, not just the prose answer, so a
 calling agent can act on the underlying data. See `/how-it-works.html` for
 the full request/response contract — this is meant as reusable
 infrastructure other agents/apps can call, not just a chat UI.
+
+## Query templates ("mini Dune")
+
+`/templates.html` offers a small set of curated, pre-built queries — pick one,
+pay its price, get a real chart. Same x402 gate and self-hosted facilitator as
+`/api/ask`, just with a fixed query instead of a free-text question, so each
+template's price is pulled straight from `pricing.ts`'s existing tier scale
+(a full time-series costs the `multi_field` price, a current-snapshot ranking
+costs the `simple` price) rather than a new pricing scheme.
+
+Candidates were written against the Uniswap v3 subgraph's public, stable
+schema (`UniswapDayData`, `Pool`) and two much less standardized shapes
+(generic per-token transfer/holder subgraphs, which vary by which community
+subgraph indexed that specific token). A template only becomes payable — wired
+into `/api/template/:id` and offered on the templates page — once
+`npm run verify-templates` confirms it against **live** Subgraph MCP data;
+until then it shows as "pending live verification" and isn't charged for.
+This is a real gate, not a formality: as of this commit, verification hasn't
+run yet because `GRAPH_GATEWAY_API_KEY` isn't populated — see
+`server/templates.ts` for the current `verified: false` on all four.
+
+To verify (once the Gateway key is real):
+
+```bash
+npm run verify-templates        # unpaid, direct-to-MCP check of every template
+# flip verified: true in server/templates.ts for whichever pass
+npm run server                  # restart to pick up the newly-payable routes
+npm run e2e-template-run -- tvl-uniswap   # real paid run: pay on Base, get a real chart
+```
+
+`e2e-template-run` needs `BUYER_PRIVATE_KEY` funded with Base Sepolia ETH and
+testnet USDC — a second fresh wallet from `scripts/generate-wallet.mjs`,
+separate from the seller/relayer key.
 
 ## Running it
 

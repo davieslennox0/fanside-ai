@@ -6,7 +6,9 @@
   "description": "x402-gated AI agent over The Graph's Subgraph MCP — ask a question about on-chain activity, get a synthesized answer from live subgraph data",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "server": "tsx server/index.ts"
+    "server": "tsx server/index.ts",
+    "verify-templates": "tsx scripts/verify-templates.mjs",
+    "e2e-template-run": "tsx scripts/e2e-template-run.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
