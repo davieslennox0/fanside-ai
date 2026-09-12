@@ -11,7 +11,7 @@ import { logActivity, getActivity, getStats } from "./activity.js";
 import { TEMPLATES } from "./templates.js";
 import { runTemplate } from "./templateRunner.js";
 import { saveTemplateResult, getLatestResults } from "./templateResults.js";
-import { getWidgets, startWidgetRefreshLoop } from "./widgetStore.js";
+import { getWidgets, startWidgetRefreshLoop, refreshWidgetsManually } from "./widgetStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4050);
@@ -158,6 +158,13 @@ app.get("/api/activity", async (_req, res) => {
 // /api/agent/query and /api/template/:id.
 app.get("/api/widgets", async (_req, res) => {
   res.json(await getWidgets());
+});
+
+// Manual, on-demand re-run of the same real queries — for demos, so
+// "live" doesn't mean "wait up to 30 minutes". Still no payment involved.
+app.post("/api/widgets/refresh", async (_req, res) => {
+  const { data, throttled } = await refreshWidgetsManually();
+  res.json({ throttled, widgets: data });
 });
 
 app.get("/api/config", (_req, res) => {

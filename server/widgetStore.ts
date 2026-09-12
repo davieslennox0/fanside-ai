@@ -32,10 +32,31 @@ export async function getWidgets(): Promise<StoredWidgets> {
  * exactly like /api/stats or /api/activity already are. Payment stays
  * scoped to /api/ask, /api/agent/query and /api/template/:id only.
  */
+let inFlight: Promise<StoredWidgets> | null = null;
+let lastRefreshStartedAt = 0;
+const MIN_MANUAL_REFRESH_GAP_MS = 15_000; // guards against refresh-button spam
+
 export async function refreshWidgets(): Promise<StoredWidgets> {
-  const data = await fetchAllWidgets();
-  await save(data);
-  return data;
+  if (inFlight) return inFlight; // a manual click during the interval's own run just waits on it
+  lastRefreshStartedAt = Date.now();
+  inFlight = (async () => {
+    const data = await fetchAllWidgets();
+    await save(data);
+    return data;
+  })();
+  try {
+    return await inFlight;
+  } finally {
+    inFlight = null;
+  }
+}
+
+/** For the manual "Refresh now" button — same real query path, just rate-limited. */
+export async function refreshWidgetsManually(): Promise<{ data: StoredWidgets; throttled: boolean }> {
+  if (!inFlight && Date.now() - lastRefreshStartedAt < MIN_MANUAL_REFRESH_GAP_MS) {
+    return { data: await load(), throttled: true };
+  }
+  return { data: await refreshWidgets(), throttled: false };
 }
 
 export function startWidgetRefreshLoop(): void {

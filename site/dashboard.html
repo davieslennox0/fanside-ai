@@ -20,46 +20,23 @@
 </header>
 
 <main>
-  <h1 style="margin-bottom:4px">Live on-chain widgets</h1>
-  <p style="color:var(--text-dim); margin-top:0">
-    Server-side queries against real subgraphs, refreshed every 30 minutes. No payment involved —
-    this is Fanside's own dashboard data, not a paid query.
-  </p>
+  <div class="dashboard-header">
+    <div>
+      <h1>Fanside Dashboard</h1>
+      <p style="color:var(--text-dim); margin:0">
+        <span class="pill" style="margin:0 6px 0 0">Data via The Graph</span>
+        <span class="pill" style="margin:0">Base <span id="hdr-network" class="mono"></span></span>
+        &nbsp;Live on-chain widgets plus this agent's own paid-query activity — every number below is a real query result, nothing seeded.
+      </p>
+    </div>
+    <button class="refresh-btn" id="refresh-all-btn" title="Re-run every widget's query now">
+      <span class="spin">⟳</span> Refresh now
+    </button>
+  </div>
 
   <div class="widget-grid" id="widget-grid">
     <div class="widget-card"><p style="color:var(--text-dim)">Loading…</p></div>
   </div>
-
-  <h1 style="margin-bottom:4px">Agent activity</h1>
-  <p style="color:var(--text-dim); margin-top:0">Real paid queries against the pay-per-question agent — no seeded/demo rows.</p>
-
-  <div class="grid">
-    <div class="card"><h3>Paid queries</h3><div class="big" id="stat-total">–</div></div>
-    <div class="card"><h3>Failed</h3><div class="big" id="stat-failed">–</div></div>
-    <div class="card"><h3>Revenue (USDC)</h3><div class="big" id="stat-revenue">–</div></div>
-    <div class="card"><h3>Settlement chain</h3><div class="big" id="stat-network" style="font-size:1.1rem">–</div></div>
-  </div>
-
-  <div class="grid" style="grid-template-columns: 2fr 1fr;">
-    <div class="chart-wrap">
-      <h3 style="margin-top:0;color:var(--text-dim)">Query volume by day</h3>
-      <canvas id="chart-volume" height="140"></canvas>
-    </div>
-    <div class="chart-wrap">
-      <h3 style="margin-top:0;color:var(--text-dim)">Pricing tier distribution</h3>
-      <canvas id="chart-tiers" height="140"></canvas>
-    </div>
-  </div>
-
-  <h2 class="section-title">Recent queries</h2>
-  <table>
-    <thead>
-      <tr><th>Time</th><th>Question</th><th>Tier</th><th>Price</th><th>Subgraphs</th><th>Caller</th></tr>
-    </thead>
-    <tbody id="activity-body">
-      <tr><td colspan="6" style="color:var(--text-dim)">Loading…</td></tr>
-    </tbody>
-  </table>
 </main>
 
 <footer>
@@ -68,9 +45,9 @@
 
 <script>
 const TIER_COLORS = { simple: "#33e0c4", multi_field: "#7c5cff", composition: "#ff6b9d" };
-const widgetCharts = {};
+const charts = {};
+let statsCache = null, configCache = null, widgetsCache = null;
 
-// Dune-style abbreviated numbers: 1234567 -> "1.2M"
 function abbr(n) {
   const abs = Math.abs(n);
   if (abs >= 1e9) return (n / 1e9).toFixed(2) + "B";
@@ -92,12 +69,35 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 }
 
-function renderWidgetCard(w) {
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function statCard(id, title, value, source) {
+  return `
+    <div class="widget-card stat">
+      <div class="widget-head"><h3>${title}</h3></div>
+      <div class="big" style="font-size:2.1rem">${value}</div>
+      <div class="widget-caption"><span>${source}</span></div>
+    </div>`;
+}
+
+function chartCardShell(id, title, canvasHeight) {
+  return `
+    <div class="widget-card">
+      <div class="widget-head"><h3>${title}</h3></div>
+      <canvas id="chart-${id}" height="${canvasHeight}"></canvas>
+      <div class="widget-caption"><span>Agent activity, this deployment</span><span id="caption-${id}"></span></div>
+    </div>`;
+}
+
+function subgraphWidgetCard(w) {
   if (w.error) {
     return `
       <div class="widget-card">
-        <div class="widget-head"><h3>${escapeHtml(w.title)}</h3><span class="widget-updated">${timeAgo(w.fetchedAt)}</span></div>
+        <div class="widget-head"><h3>${escapeHtml(w.title)}</h3></div>
         <p class="widget-error">Refresh failed: ${escapeHtml(w.error)}</p>
+        <div class="widget-caption"><span>Data via The Graph</span><span>${timeAgo(w.fetchedAt)}</span></div>
       </div>`;
   }
 
@@ -112,42 +112,109 @@ function renderWidgetCard(w) {
 
   return `
     <div class="widget-card">
-      <div class="widget-head"><h3>${escapeHtml(w.title)}</h3><span class="widget-updated">updated ${timeAgo(w.fetchedAt)}</span></div>
+      <div class="widget-head"><h3>${escapeHtml(w.title)}</h3></div>
       <canvas id="wchart-${w.id}" height="120"></canvas>
       <table class="widget-table">
         <thead><tr><th>Label</th><th class="num">${escapeHtml(w.valueLabel)}</th><th></th></tr></thead>
         <tbody>${tableRows || `<tr><td colspan="3" style="color:var(--text-dim)">No data yet</td></tr>`}</tbody>
       </table>
+      <div class="widget-caption"><span>Data via The Graph</span><span>updated ${timeAgo(w.fetchedAt)}</span></div>
     </div>`;
 }
 
-async function loadWidgets() {
-  const widgets = await fetch("/api/widgets").then(r => r.json());
-  const grid = document.getElementById("widget-grid");
-  const ids = Object.keys(widgets);
+function activityTableCard(stats) {
+  const rows = stats.recent.length === 0
+    ? `<tr><td colspan="6" style="color:var(--text-dim)">No queries yet — be the first.</td></tr>`
+    : stats.recent.map(e => `
+        <tr>
+          <td>${new Date(e.timestamp).toLocaleString()}</td>
+          <td>${escapeHtml(e.question).slice(0, 80)}</td>
+          <td><span class="tier-badge tier-${e.tier}">${e.tier}</span></td>
+          <td>$${e.price}</td>
+          <td class="mono">${(e.subgraphsUsed || []).join(", ") || "–"}</td>
+          <td>${e.caller}</td>
+        </tr>
+      `).join("");
 
-  if (ids.length === 0) {
-    grid.innerHTML = `<div class="widget-card"><p style="color:var(--text-dim)">Widgets haven't run yet — first refresh happens on server start.</p></div>`;
-    return;
+  return `
+    <div class="widget-card wide">
+      <div class="widget-head"><h3>Recent paid queries</h3></div>
+      <table class="widget-table">
+        <thead><tr><th>Time</th><th>Question</th><th>Tier</th><th>Price</th><th>Subgraphs</th><th>Caller</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="widget-caption"><span>/api/ask + /api/agent/query</span><span>live</span></div>
+    </div>`;
+}
+
+function renderAll() {
+  if (!statsCache || !configCache || !widgetsCache) return;
+  const grid = document.getElementById("widget-grid");
+
+  const cards = [];
+  cards.push(statCard("total", "Paid queries", statsCache.totalQueries, "/api/ask + /api/agent/query"));
+  cards.push(statCard("failed", "Failed", statsCache.totalFailed, "/api/ask + /api/agent/query"));
+  cards.push(statCard("revenue", "Revenue (USDC)", "$" + abbr(statsCache.revenueUsdc), "Settled on " + configCache.network));
+  cards.push(chartCardShell("volume", "Query volume by day", 110));
+  cards.push(chartCardShell("tiers", "Pricing tier distribution", 110));
+
+  for (const id of Object.keys(widgetsCache)) {
+    cards.push(subgraphWidgetCard(widgetsCache[id]));
   }
 
-  grid.innerHTML = ids.map(id => renderWidgetCard(widgets[id])).join("");
+  cards.push(activityTableCard(statsCache));
 
-  for (const id of ids) {
-    const w = widgets[id];
+  grid.innerHTML = cards.join("");
+  document.getElementById("hdr-network").textContent = configCache.network.replace("eip155:", "chain ");
+
+  destroyChart("volume");
+  const days = Object.keys(statsCache.byDay).sort();
+  charts.volume = new Chart(document.getElementById("chart-volume"), {
+    type: "line",
+    data: {
+      labels: days,
+      datasets: [{
+        label: "Queries", data: days.map(d => statsCache.byDay[d]),
+        borderColor: "#7c5cff", backgroundColor: "rgba(124,92,255,0.15)", fill: true, tension: 0.3,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#9498b8" }, grid: { color: "#262b45" } },
+        y: { ticks: { color: "#9498b8", precision: 0 }, grid: { color: "#262b45" } },
+      },
+    },
+  });
+  document.getElementById("caption-volume").textContent = days.length ? `${days.length} day(s)` : "no data yet";
+
+  destroyChart("tiers");
+  const tierKeys = Object.keys(statsCache.byTier);
+  charts.tiers = new Chart(document.getElementById("chart-tiers"), {
+    type: "doughnut",
+    data: {
+      labels: tierKeys.length ? tierKeys : ["no data yet"],
+      datasets: [{
+        data: tierKeys.length ? tierKeys.map(k => statsCache.byTier[k]) : [1],
+        backgroundColor: tierKeys.length ? tierKeys.map(k => TIER_COLORS[k] ?? "#444") : ["#262b45"],
+        borderWidth: 0,
+      }],
+    },
+    options: { plugins: { legend: { position: "bottom", labels: { color: "#e8e9f5", boxWidth: 10, font: { size: 10 } } } } },
+  });
+  document.getElementById("caption-tiers").textContent = tierKeys.length ? `${tierKeys.length} tier(s) used` : "no data yet";
+
+  for (const id of Object.keys(widgetsCache)) {
+    const w = widgetsCache[id];
     if (w.error || !w.rows.length) continue;
+    destroyChart(id);
     const ctx = document.getElementById(`wchart-${id}`);
     if (!ctx) continue;
-    if (widgetCharts[id]) widgetCharts[id].destroy();
-    widgetCharts[id] = new Chart(ctx, {
+    charts[id] = new Chart(ctx, {
       type: "bar",
       data: {
         labels: w.rows.slice(0, 15).map(r => r.label),
-        datasets: [{
-          data: w.rows.slice(0, 15).map(r => r.value),
-          backgroundColor: "#7c5cff",
-          borderRadius: 3,
-        }],
+        datasets: [{ data: w.rows.slice(0, 15).map(r => r.value), backgroundColor: "#7c5cff", borderRadius: 3 }],
       },
       options: {
         plugins: { legend: { display: false } },
@@ -160,83 +227,45 @@ async function loadWidgets() {
   }
 }
 
-async function loadActivity() {
+async function loadStats() {
   const [stats, config] = await Promise.all([
     fetch("/api/stats").then(r => r.json()),
     fetch("/api/config").then(r => r.json()),
   ]);
-
-  document.getElementById("stat-total").textContent = stats.totalQueries;
-  document.getElementById("stat-failed").textContent = stats.totalFailed;
-  document.getElementById("stat-revenue").textContent = "$" + abbr(stats.revenueUsdc);
-  document.getElementById("stat-network").textContent = config.network;
-
-  const days = Object.keys(stats.byDay).sort();
-  new Chart(document.getElementById("chart-volume"), {
-    type: "line",
-    data: {
-      labels: days,
-      datasets: [{
-        label: "Queries",
-        data: days.map(d => stats.byDay[d]),
-        borderColor: "#7c5cff",
-        backgroundColor: "rgba(124,92,255,0.15)",
-        fill: true,
-        tension: 0.3,
-      }],
-    },
-    options: {
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: "#9498b8" }, grid: { color: "#262b45" } },
-        y: { ticks: { color: "#9498b8", precision: 0 }, grid: { color: "#262b45" } },
-      },
-    },
-  });
-
-  const tierKeys = Object.keys(stats.byTier);
-  new Chart(document.getElementById("chart-tiers"), {
-    type: "doughnut",
-    data: {
-      labels: tierKeys.length ? tierKeys : ["no data yet"],
-      datasets: [{
-        data: tierKeys.length ? tierKeys.map(k => stats.byTier[k]) : [1],
-        backgroundColor: tierKeys.length ? tierKeys.map(k => TIER_COLORS[k] ?? "#444") : ["#262b45"],
-        borderWidth: 0,
-      }],
-    },
-    options: { plugins: { legend: { position: "bottom", labels: { color: "#e8e9f5" } } } },
-  });
-
-  const tbody = document.getElementById("activity-body");
-  if (stats.recent.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-dim)">No queries yet — be the first.</td></tr>';
-  } else {
-    tbody.innerHTML = stats.recent.map(e => `
-      <tr>
-        <td>${new Date(e.timestamp).toLocaleString()}</td>
-        <td>${escapeHtml(e.question).slice(0, 80)}</td>
-        <td><span class="tier-badge tier-${e.tier}">${e.tier}</span></td>
-        <td>$${e.price}</td>
-        <td class="mono">${(e.subgraphsUsed || []).join(", ") || "–"}</td>
-        <td>${e.caller}</td>
-      </tr>
-    `).join("");
-  }
+  statsCache = stats;
+  configCache = config;
+  renderAll();
 }
 
-loadWidgets().catch(err => {
-  document.getElementById("widget-grid").innerHTML =
-    `<div class="widget-card"><p class="widget-error">Failed to load widgets: ${err.message}</p></div>`;
-});
-loadActivity().catch(err => {
-  document.getElementById("activity-body").innerHTML =
-    `<tr><td colspan="6" style="color:var(--danger)">Failed to load: ${err.message}</td></tr>`;
+async function loadWidgets() {
+  widgetsCache = await fetch("/api/widgets").then(r => r.json());
+  renderAll();
+}
+
+document.getElementById("refresh-all-btn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.classList.add("spinning");
+  try {
+    const res = await fetch("/api/widgets/refresh", { method: "POST" }).then(r => r.json());
+    widgetsCache = res.widgets;
+    renderAll();
+    if (res.throttled) btn.title = "Refreshed very recently — showing the latest cached run";
+  } catch (err) {
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("spinning");
+  }
 });
 
-// Client-side poll — cheap, since the server just serves its cached
-// 30-min-refreshed JSON; keeps "last updated" timestamps honest without
-// a manual reload.
+loadStats().catch(err => {
+  document.getElementById("widget-grid").innerHTML = `<div class="widget-card"><p class="widget-error">Failed to load: ${err.message}</p></div>`;
+});
+loadWidgets().catch(err => {
+  document.getElementById("widget-grid").innerHTML += `<div class="widget-card"><p class="widget-error">Failed to load widgets: ${err.message}</p></div>`;
+});
+
 setInterval(() => loadWidgets().catch(() => {}), 60_000);
 </script>
 </body>
