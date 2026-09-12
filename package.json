@@ -1,0 +1,27 @@
+{
+  "name": "fanside-ai",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "x402-gated AI agent over The Graph's Subgraph MCP — ask a question about on-chain activity, get a synthesized answer from live subgraph data",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "server": "tsx server/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@x402/core": "2.25.0",
+    "@x402/evm": "2.25.0",
+    "@x402/express": "2.25.0",
+    "@x402/fetch": "2.25.0",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.13.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
+  }
+}

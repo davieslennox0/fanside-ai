@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How it works — Fanside AI</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="nav">
+  <div class="brand"><span class="dot"></span> Fanside AI</div>
+  <nav class="links">
+    <a href="/">Home</a>
+    <a href="/how-it-works.html" class="active">How it works</a>
+    <a href="/dashboard.html">Dashboard</a>
+    <a href="https://github.com/davieslennox0/fanside-ai" target="_blank">GitHub ↗</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero" style="padding-top:0">
+    <h1 style="font-size:2.2rem">How Fanside answers a question</h1>
+    <p>Every request runs the same real pipeline — nothing here is precomputed or mocked.</p>
+  </section>
+
+  <ol class="steps">
+    <li>
+      <h4>1. Classify complexity</h4>
+      <p>Before anything runs, the question text is scored into one of three tiers — single-subgraph, multi-field, or multi-subgraph composition — and priced accordingly.</p>
+    </li>
+    <li>
+      <h4>2. x402 payment challenge</h4>
+      <p>The API responds <code>402 Payment Required</code> with the tier's price. The caller signs an EIP-3009 (or Permit2) USDC authorization and retries with the payment header — no on-chain approval transaction needed up front.</p>
+    </li>
+    <li>
+      <h4>3. Self-hosted verify &amp; settle on Base</h4>
+      <p>Fanside's own server verifies the signature and broadcasts the settlement itself — chain ID 8453/84532, USDC — using <code>@x402/evm</code>'s <code>ExactEvmScheme</code> facilitator. No external facilitator service sits in the middle.</p>
+    </li>
+    <li>
+      <h4>4. Search The Graph's Subgraph MCP</h4>
+      <p>Once payment settles, Fanside calls the live Subgraph MCP (<code>subgraphs.mcp.thegraph.com</code>): keyword search, a mandatory 30-day query-count check to pick the actively-used deployment, then fetches its real GraphQL schema.</p>
+    </li>
+    <li>
+      <h4>5. Generate &amp; execute a real query</h4>
+      <p>An LLM call turns the question plus the subgraph's schema into a GraphQL query restricted to that schema's actual fields — then it's executed live against the subgraph.</p>
+    </li>
+    <li>
+      <h4>6. Synthesize the answer</h4>
+      <p>A second LLM call turns the raw JSON result into a plain-language answer grounded only in that data — never invented figures.</p>
+    </li>
+  </ol>
+
+  <h2 class="section-title">For agents &amp; apps: <code>/api/agent/query</code></h2>
+  <p style="color:var(--text-dim)">
+    Fanside is built to be called by other agents, not just humans in a chat UI. The agent-facing
+    endpoint takes the same request shape and returns structured data (not prose-only) so a calling
+    agent can parse subgraphs used and raw results, not just the summary.
+  </p>
+  <pre>POST /api/agent/query
+Content-Type: application/json
+
+{ "question": "Compare Uniswap and Aave activity this week" }
+
+→ 402 Payment Required (first call — no payment header yet)
+{
+  "x402Version": 2,
+  "accepts": [{ "scheme": "exact", "network": "eip155:84532", "asset": "USDC", "maxAmountRequired": "100000", ... }]
+}
+
+→ retry with X-PAYMENT header containing the signed authorization
+
+→ 200 OK
+{
+  "answer": "Over the past week, Uniswap saw ... while Aave ...",
+  "tier": "composition",
+  "price_usdc": "0.10",
+  "subgraphs_used": [
+    { "name": "Uniswap V3", "id": "..." },
+    { "name": "Aave V3",   "id": "..." }
+  ],
+  "raw_results": [ { "subgraph": "Uniswap V3", "query": "...", "result": { ... } }, ... ]
+}</pre>
+  <p style="color:var(--text-dim)">
+    Any x402-aware HTTP client (the reference <code>x402-fetch</code>/<code>@x402/fetch</code> wrapper, or a hand-rolled
+    signer) can drive this loop — this is the same protocol used for the human-facing <code>/api/ask</code>, just with a
+    response shaped for machine consumption.
+  </p>
+
+  <h2 class="section-title">Why The Graph is load-bearing here</h2>
+  <p style="color:var(--text-dim)">
+    Fanside has no local index and no cache of subgraph data — every answer requires a live MCP round trip
+    (search → query-count check → schema → execute) at request time. Remove the MCP call and there is no
+    product: the pricing tiers exist specifically to reflect how much real subgraph querying a question requires.
+  </p>
+</main>
+
+<footer>
+  Fanside AI · Open source · <a href="https://github.com/davieslennox0/fanside-ai">github.com/davieslennox0/fanside-ai</a>
+</footer>
+</body>
+</html>

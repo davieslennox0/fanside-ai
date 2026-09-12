@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fanside AI — pay-per-answer agent for on-chain data</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="nav">
+  <div class="brand"><span class="dot"></span> Fanside AI</div>
+  <nav class="links">
+    <a href="/" class="active">Home</a>
+    <a href="/how-it-works.html">How it works</a>
+    <a href="/dashboard.html">Dashboard</a>
+    <a href="https://github.com/davieslennox0/fanside-ai" target="_blank">GitHub ↗</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero">
+    <span class="pill">ETHOnline 2026 · Best AI Tooling with The Graph</span>
+    <h1>Ask about on-chain activity.<br />Get a real answer, live.</h1>
+    <p>
+      Fanside is an x402-payable AI agent that queries <strong>The Graph's Subgraph MCP</strong>
+      live — no cached data, no mocks — and synthesizes the raw results into a plain-language
+      answer. Pay per question, priced by how complex it is, settled on Base.
+    </p>
+    <a class="btn" href="/dashboard.html">View live activity</a>
+    <a class="btn secondary" href="/how-it-works.html">How it works</a>
+  </section>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Live subgraph data</h3>
+      <p>Every answer is backed by a real, current query against a real subgraph — search, schema, and execution all happen at request time.</p>
+    </div>
+    <div class="card">
+      <h3>Pay-per-question</h3>
+      <p>x402 over HTTP: no accounts, no subscriptions. A 402 challenge is priced before your query ever runs, then settled instantly on Base.</p>
+    </div>
+    <div class="card">
+      <h3>Built for agents</h3>
+      <p>A dedicated <code>/api/agent/query</code> endpoint lets other agents and apps call Fanside programmatically — it's infrastructure, not just a chat box.</p>
+    </div>
+  </div>
+
+  <h2 class="section-title">Complexity-scaled pricing</h2>
+  <div class="grid">
+    <div class="card">
+      <span class="tier-badge tier-simple">Simple</span>
+      <h3 style="margin-top:12px">Single-subgraph lookup</h3>
+      <div class="big">$0.02</div>
+      <p style="color:var(--text-dim)">One subgraph, one field. e.g. "What's the TVL of Aave right now?"</p>
+    </div>
+    <div class="card">
+      <span class="tier-badge tier-multi_field">Multi-field</span>
+      <h3 style="margin-top:12px">Multi-field query</h3>
+      <div class="big">$0.05</div>
+      <p style="color:var(--text-dim)">One subgraph, several fields/filters. e.g. "Top 5 Uniswap pools by volume and fees this week."</p>
+    </div>
+    <div class="card">
+      <span class="tier-badge tier-composition">Composition</span>
+      <h3 style="margin-top:12px">Multi-subgraph composition</h3>
+      <div class="big">$0.10</div>
+      <p style="color:var(--text-dim)">Two or more subgraphs combined. e.g. "Compare Uniswap and Aave activity this month."</p>
+    </div>
+  </div>
+
+  <h2 class="section-title">Try it</h2>
+  <pre>curl -i https://<span id="domain-1">DOMAIN</span>/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is the current TVL of Aave?"}'
+# -> 402 Payment Required, priced by complexity
+# pay the x402 challenge, retry with the payment header, get a real answer</pre>
+</main>
+
+<footer>
+  Fanside AI · Open source · <a href="https://github.com/davieslennox0/fanside-ai">github.com/davieslennox0/fanside-ai</a>
+</footer>
+
+<script>
+  fetch("/api/config").then(r => r.json()).then(c => {
+    document.querySelectorAll("#domain-1").forEach(el => el.textContent = c.domain);
+  }).catch(() => {});
+</script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dashboard — Fanside AI</title>
+<link rel="stylesheet" href="/style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="nav">
+  <div class="brand"><span class="dot"></span> Fanside AI</div>
+  <nav class="links">
+    <a href="/">Home</a>
+    <a href="/how-it-works.html">How it works</a>
+    <a href="/dashboard.html" class="active">Dashboard</a>
+    <a href="https://github.com/davieslennox0/fanside-ai" target="_blank">GitHub ↗</a>
+  </nav>
+</header>
+
+<main>
+  <h1 style="margin-bottom:4px">Live activity</h1>
+  <p style="color:var(--text-dim); margin-top:0">Real paid queries against this agent — no seeded/demo rows.</p>
+
+  <div class="grid">
+    <div class="card"><h3>Paid queries</h3><div class="big" id="stat-total">–</div></div>
+    <div class="card"><h3>Failed</h3><div class="big" id="stat-failed">–</div></div>
+    <div class="card"><h3>Revenue (USDC)</h3><div class="big" id="stat-revenue">–</div></div>
+    <div class="card"><h3>Settlement chain</h3><div class="big" id="stat-network" style="font-size:1.1rem">–</div></div>
+  </div>
+
+  <div class="grid" style="grid-template-columns: 2fr 1fr;">
+    <div class="chart-wrap">
+      <h3 style="margin-top:0;color:var(--text-dim)">Query volume by day</h3>
+      <canvas id="chart-volume" height="140"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <h3 style="margin-top:0;color:var(--text-dim)">Pricing tier distribution</h3>
+      <canvas id="chart-tiers" height="140"></canvas>
+    </div>
+  </div>
+
+  <h2 class="section-title">Recent queries</h2>
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Question</th><th>Tier</th><th>Price</th><th>Subgraphs</th><th>Caller</th></tr>
+    </thead>
+    <tbody id="activity-body">
+      <tr><td colspan="6" style="color:var(--text-dim)">Loading…</td></tr>
+    </tbody>
+  </table>
+</main>
+
+<footer>
+  Fanside AI · Open source · <a href="https://github.com/davieslennox0/fanside-ai">github.com/davieslennox0/fanside-ai</a>
+</footer>
+
+<script>
+const TIER_COLORS = { simple: "#33e0c4", multi_field: "#7c5cff", composition: "#ff6b9d" };
+
+async function load() {
+  const [stats, config] = await Promise.all([
+    fetch("/api/stats").then(r => r.json()),
+    fetch("/api/config").then(r => r.json()),
+  ]);
+
+  document.getElementById("stat-total").textContent = stats.totalQueries;
+  document.getElementById("stat-failed").textContent = stats.totalFailed;
+  document.getElementById("stat-revenue").textContent = "$" + stats.revenueUsdc.toFixed(2);
+  document.getElementById("stat-network").textContent = config.network;
+
+  const days = Object.keys(stats.byDay).sort();
+  new Chart(document.getElementById("chart-volume"), {
+    type: "line",
+    data: {
+      labels: days,
+      datasets: [{
+        label: "Queries",
+        data: days.map(d => stats.byDay[d]),
+        borderColor: "#7c5cff",
+        backgroundColor: "rgba(124,92,255,0.15)",
+        fill: true,
+        tension: 0.3,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#9498b8" }, grid: { color: "#262b45" } },
+        y: { ticks: { color: "#9498b8", precision: 0 }, grid: { color: "#262b45" } },
+      },
+    },
+  });
+
+  const tierKeys = Object.keys(stats.byTier);
+  new Chart(document.getElementById("chart-tiers"), {
+    type: "doughnut",
+    data: {
+      labels: tierKeys.length ? tierKeys : ["no data yet"],
+      datasets: [{
+        data: tierKeys.length ? tierKeys.map(k => stats.byTier[k]) : [1],
+        backgroundColor: tierKeys.length ? tierKeys.map(k => TIER_COLORS[k] ?? "#444") : ["#262b45"],
+        borderWidth: 0,
+      }],
+    },
+    options: { plugins: { legend: { position: "bottom", labels: { color: "#e8e9f5" } } } },
+  });
+
+  const tbody = document.getElementById("activity-body");
+  if (stats.recent.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-dim)">No queries yet — be the first.</td></tr>';
+  } else {
+    tbody.innerHTML = stats.recent.map(e => `
+      <tr>
+        <td>${new Date(e.timestamp).toLocaleString()}</td>
+        <td>${escapeHtml(e.question).slice(0, 80)}</td>
+        <td><span class="tier-badge tier-${e.tier}">${e.tier}</span></td>
+        <td>$${e.price}</td>
+        <td>${(e.subgraphsUsed || []).join(", ") || "–"}</td>
+        <td>${e.caller}</td>
+      </tr>
+    `).join("");
+  }
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+load().catch(err => {
+  document.getElementById("activity-body").innerHTML =
+    `<tr><td colspan="6" style="color:var(--danger)">Failed to load: ${err.message}</td></tr>`;
+});
+</script>
+</body>
+</html>
