@@ -99,23 +99,44 @@ template's price is pulled straight from `pricing.ts`'s existing tier scale
 (a full time-series costs the `multi_field` price, a current-snapshot ranking
 costs the `simple` price) rather than a new pricing scheme.
 
-Candidates were written against the Uniswap v3 subgraph's public, stable
-schema (`UniswapDayData`, `Pool`) and two much less standardized shapes
-(generic per-token transfer/holder subgraphs, which vary by which community
-subgraph indexed that specific token). A template only becomes payable — wired
-into `/api/template/:id` and offered on the templates page — once
-`npm run verify-templates` confirms it against **live** Subgraph MCP data;
-until then it shows as "pending live verification" and isn't charged for.
-This is a real gate, not a formality: as of this commit, verification hasn't
-run yet because `GRAPH_GATEWAY_API_KEY` isn't populated — see
-`server/templates.ts` for the current `verified: false` on all four.
+A template only becomes payable — wired into `/api/template/:id` and offered
+on the templates page — once `npm run verify-templates` confirms it against
+**live** Subgraph MCP data. This is a real gate, not a formality: it caught
+real problems (see below) before anything went live.
 
-To verify (once the Gateway key is real):
+**Shipped, verified (2):** both pinned to Subgraph Studio ID
+`5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV` ("Uniswap-V3"), the real
+canonical Uniswap v3 Ethereum mainnet subgraph.
+- `tvl-uniswap` — TVL over time (`$0.05`)
+- `swap-volume-pools` — swap volume by pool, e.g. USDC/WETH, WETH/USDT (`$0.02`)
+
+**Attempted and dropped (2):** "daily transfer volume" and "top holders" for
+a named token, both meant to be generic across any ERC-20. Every candidate
+subgraph found — via keyword search and via `get_top_subgraph_deployments`
+for USDC's own contract address — came back `subgraph not found: no
+allocations` at query time (no indexer currently serving that deployment),
+even for one with substantial historical query fees. Schema fetches for these
+succeeded fine; only live execution failed, which is exactly the distinction
+`npm run verify-templates` exists to catch. Not shipping these two rather than
+silently resolving to whichever unrelated schema happened to answer.
+
+**Why pinned IDs, not live keyword search:** the first pass of `tvl-uniswap`
+resolved to `uniswap-v4-base-3` — a Uniswap v4 Base subgraph that happens to
+expose fields with the same names (`uniswapDayDatas`, `pools`) as v3's schema,
+so the query executed and returned real numbers, just not from what the
+template claims to measure. The Subgraph MCP's own mandatory 30-day
+query-count check didn't help disambiguate — with a fresh Gateway API key
+every candidate reports `0` (that count appears scoped to the querying
+key/gateway, not the subgraph's real-world popularity). Curated templates
+pin an exact, manually-confirmed subgraph ID instead of trusting keyword
+search fresh on every run; free-text questions in `/api/ask` still use live
+keyword search since there's no way to pre-curate those.
+
+To re-run verification or add more templates:
 
 ```bash
-npm run verify-templates        # unpaid, direct-to-MCP check of every template
-# flip verified: true in server/templates.ts for whichever pass
-npm run server                  # restart to pick up the newly-payable routes
+npm run verify-templates                  # unpaid, direct-to-MCP check of every template
+npm run server                            # restart to pick up any newly-payable routes
 npm run e2e-template-run -- tvl-uniswap   # real paid run: pay on Base, get a real chart
 ```
 
@@ -158,6 +179,27 @@ pointed at a real domain without touching code.
 - `@x402/evm`'s `DEFAULT_ASSETS` export ships the canonical USDC addresses
   per chain (including Base Sepolia's) — used that instead of guessing an
   address.
+- The Subgraph MCP's real tool schemas (confirmed via `client.listTools()`,
+  see `scripts/list-mcp-tools.mjs`) don't match what their friendly names
+  suggest: `get_deployment_30day_query_counts` takes `ipfs_hashes: string[]`,
+  not a `deployment_id`; `get_top_subgraph_deployments` takes `chain` +
+  `contract_address` (find deployments indexing a contract) rather than a
+  generic "top N" list; and `search_subgraphs_by_keyword` candidates carry
+  the deployment IPFS hash nested at `currentVersion.subgraphDeployment.
+  ipfsHash`, not a top-level field. Worth calling `listTools()` yourself
+  before trusting a tool's name.
+- Groq model catalogs differ per key — this project's key (reused from
+  `hedera-x402`, see below) has no `llama-3.1`/`llama-3.3` model at all
+  (`GET /v1/models` returns the qwen3/gpt-oss/allam/compound families only);
+  requested `llama-3.1` and got a `model_not_found` 404, so this uses
+  `openai/gpt-oss-20b` instead — check `/v1/models` for your own key rather
+  than assuming a commonly-referenced model name is available.
+
+**On the Groq key:** unlike the Gateway key and the Base wallet (fresh and
+dedicated to this project, per the original brief), the Groq key is reused
+from `hedera-x402` at the project owner's explicit direction — Groq isn't
+the judged differentiator for this track, The Graph integration is, and the
+two projects don't share rate-limit-sensitive load.
 
 ## Demo video shot list (2-4 min, not recorded in this session)
 

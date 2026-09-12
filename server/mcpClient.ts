@@ -39,21 +39,36 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
   }
 }
 
+// Real shape returned by search_subgraphs_by_keyword, confirmed against the
+// live MCP endpoint — the deployment's IPFS hash is nested, not a top-level
+// field, and there is no top-level "deploymentId".
 export interface SubgraphCandidate {
-  id: string;
-  displayName?: string;
-  ipfsHash?: string;
-  deploymentId?: string;
+  id: string; // Subgraph Studio subgraph ID (e.g. "5zvR82...")
+  metadata?: { displayName?: string };
+  currentVersion?: { subgraphDeployment?: { ipfsHash?: string } };
   [key: string]: unknown;
 }
 
-export async function searchSubgraphsByKeyword(keyword: string, limit = 5): Promise<SubgraphCandidate[]> {
-  const result = await callTool("search_subgraphs_by_keyword", { keyword, limit });
-  return Array.isArray(result) ? (result as SubgraphCandidate[]) : ((result as { subgraphs?: SubgraphCandidate[] })?.subgraphs ?? []);
+function ipfsHashOf(candidate: SubgraphCandidate): string | undefined {
+  return candidate.currentVersion?.subgraphDeployment?.ipfsHash;
 }
 
-export async function get30DayQueryCounts(deploymentId: string): Promise<unknown> {
-  return callTool("get_deployment_30day_query_counts", { deployment_id: deploymentId });
+function displayNameOf(candidate: SubgraphCandidate): string {
+  return candidate.metadata?.displayName ?? candidate.id;
+}
+
+// search_subgraphs_by_keyword only accepts `keyword` — no server-side limit
+// param, so trim client-side.
+export async function searchSubgraphsByKeyword(keyword: string, limit = 10): Promise<SubgraphCandidate[]> {
+  const result = await callTool("search_subgraphs_by_keyword", { keyword });
+  const list = Array.isArray(result)
+    ? (result as SubgraphCandidate[])
+    : ((result as { subgraphs?: SubgraphCandidate[] })?.subgraphs ?? []);
+  return list.slice(0, limit);
+}
+
+export async function get30DayQueryCounts(ipfsHash: string): Promise<unknown> {
+  return callTool("get_deployment_30day_query_counts", { ipfs_hashes: [ipfsHash] });
 }
 
 export async function getSchemaBySubgraphId(subgraphId: string): Promise<unknown> {
@@ -64,46 +79,86 @@ export async function executeQueryBySubgraphId(subgraphId: string, query: string
   return callTool("execute_query_by_subgraph_id", { subgraph_id: subgraphId, query, variables: variables ?? {} });
 }
 
-export async function getTopSubgraphDeployments(limit = 10): Promise<unknown> {
-  return callTool("get_top_subgraph_deployments", { limit });
+// Finds deployments indexing a specific contract on a specific chain — not
+// a generic "top N" list, despite the friendlier name.
+export async function getTopSubgraphDeployments(chain: string, contractAddress: string): Promise<unknown> {
+  return callTool("get_top_subgraph_deployments", { chain, contract_address: contractAddress });
 }
 
 /**
- * Documented Subgraph MCP workflow: search -> mandatory 30-day query-count
- * check (picks the deployment that's actually being used/maintained, not a
- * stale abandoned one with the same name) -> schema -> execute.
- * Returns the chosen subgraph plus everything the synthesis step needs to
- * cite where the data came from.
+ * Documented Subgraph MCP workflow, step 1-2: search -> mandatory 30-day
+ * query-count check on every candidate. Ranks by that count, highest first.
+ *
+ * In practice a fresh Gateway API key sees "0" for every candidate (the
+ * count appears to be scoped to the querying key/gateway, not the
+ * subgraph's real-world popularity), so ties are common — the ranking is
+ * still real and still runs the mandatory check, but callers that need a
+ * subgraph which actually resolves (some search hits are dev/test/
+ * unallocated deployments that error on execution) should try candidates
+ * in the returned order and fall through on failure rather than trusting
+ * rank 0 blindly.
  */
-export async function pickBestSubgraph(keyword: string): Promise<{ candidate: SubgraphCandidate; queryCounts: unknown }> {
+export async function rankSubgraphsByUsage(keyword: string): Promise<Array<{ candidate: SubgraphCandidate; queryCount: number }>> {
   const candidates = await searchSubgraphsByKeyword(keyword);
   if (candidates.length === 0) {
     throw new Error(`No subgraphs found for keyword "${keyword}"`);
   }
 
-  let best = candidates[0];
-  let bestCounts: unknown = null;
-  let bestScore = -1;
-
-  for (const candidate of candidates.slice(0, 3)) {
-    const deploymentId = candidate.deploymentId ?? candidate.id;
-    try {
-      const counts = await get30DayQueryCounts(deploymentId);
-      const score = extractQueryVolume(counts);
-      if (score > bestScore) {
-        bestScore = score;
-        best = candidate;
-        bestCounts = counts;
+  const scored = await Promise.all(
+    candidates.map(async (candidate) => {
+      const ipfsHash = ipfsHashOf(candidate);
+      if (!ipfsHash) return { candidate, queryCount: 0 };
+      try {
+        const counts = await get30DayQueryCounts(ipfsHash);
+        return { candidate, queryCount: extractQueryVolume(counts) };
+      } catch {
+        return { candidate, queryCount: 0 };
       }
-    } catch {
-      // If the count check fails for a candidate, skip it rather than fail the whole request.
+    }),
+  );
+
+  return scored.sort((a, b) => b.queryCount - a.queryCount);
+}
+
+/**
+ * Ranks candidates for `keyword` (mandatory 30-day count check included),
+ * then tries `attempt` against each in ranked order, returning the first
+ * one that succeeds. Needed because the count check alone doesn't catch
+ * dev/test/unallocated deployments that share a display name with the real
+ * thing but error out on actual execution (e.g. "subgraph not found: no
+ * allocations") — this is what actually confirms "real usable data".
+ */
+export async function resolveWorkingSubgraph<T>(
+  keyword: string,
+  attempt: (candidate: SubgraphCandidate) => Promise<T>,
+): Promise<{ candidate: SubgraphCandidate; result: T }> {
+  const ranked = await rankSubgraphsByUsage(keyword);
+  const errors: string[] = [];
+
+  for (const { candidate } of ranked) {
+    try {
+      const result = await attempt(candidate);
+      return { candidate, result };
+    } catch (err) {
+      errors.push(`${displayNameOf(candidate)} (${candidate.id}): ${(err as Error).message}`);
     }
   }
 
-  return { candidate: best, queryCounts: bestCounts };
+  throw new Error(`No working subgraph found for "${keyword}" — tried ${ranked.length}: ${errors.join("; ")}`);
 }
 
 function extractQueryVolume(counts: unknown): number {
+  if (Array.isArray(counts)) {
+    return counts.reduce((sum, entry) => {
+      if (entry && typeof entry === "object") {
+        const values = Object.values(entry as Record<string, unknown>).filter(
+          (v): v is number => typeof v === "number",
+        );
+        return sum + values.reduce((a, b) => a + b, 0);
+      }
+      return sum;
+    }, 0);
+  }
   if (counts && typeof counts === "object") {
     const values = Object.values(counts as Record<string, unknown>).filter(
       (v): v is number => typeof v === "number",
@@ -112,3 +167,5 @@ function extractQueryVolume(counts: unknown): number {
   }
   return 0;
 }
+
+export { displayNameOf };

@@ -14,7 +14,16 @@ export interface QueryTemplate {
   description: string;
   chartType: ChartType;
   price: string; // reuses the same USDC tier scale as pricing.ts's TIERS
-  protocolKeyword: string; // search_subgraphs_by_keyword input
+  /**
+   * Real Subgraph Studio subgraph ID, confirmed live via manual keyword
+   * search (search_subgraphs_by_keyword "uniswap" -> "Uniswap-V3"). Curated
+   * templates pin an exact known-good subgraph rather than trusting keyword
+   * search fresh each run — search turned up several unallocated/dev/wrong-
+   * version deployments sharing the same or a similar display name (see
+   * README "Friction" for the full story), so pinning is what actually
+   * makes "real usable data" reliable here, not a shortcut around it.
+   */
+  pinnedSubgraphId: string;
   buildQuery: (params: Record<string, unknown>) => { query: string; variables: Record<string, unknown> };
   transform: (raw: unknown) => TemplateResult;
   /**
@@ -27,23 +36,29 @@ export interface QueryTemplate {
 }
 
 /**
- * Curated "mini Dune" templates. Query shapes below follow the Uniswap v3
- * subgraph's well-documented, stable public schema (github.com/Uniswap/
- * v3-subgraph) — the two most standardized entities (UniswapDayData, Pool)
- * are used for the two templates most likely to verify cleanly on the first
- * try; the other two lean on much less standardized per-token schemas
- * (generic ERC-20 transfer/holder subgraphs vary a lot by which community
- * subgraph indexed that token) and are explicitly the ones most likely to
- * get dropped in scripts/verify-templates.mjs.
+ * Curated "mini Dune" templates, both pinned to Subgraph Studio ID
+ * "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV" ("Uniswap-V3"), the real
+ * canonical Uniswap v3 Ethereum mainnet subgraph confirmed live against
+ * The Graph's Subgraph MCP.
+ *
+ * Two other candidates (daily transfer volume, top holders — both meant to
+ * be generic per-token ERC-20 templates) were built and tested against real
+ * live data and DROPPED: every actively-indexed candidate subgraph found via
+ * keyword search and via get_top_subgraph_deployments(chain, contract) for
+ * USDC came back "subgraph not found: no allocations" (no indexer currently
+ * serving that deployment) at execution time, even when its schema fetched
+ * fine and it had historically been a heavily-queried deployment. Not
+ * shipping those two rather than quietly resolving them to whatever
+ * unrelated schema happened to answer.
  */
 export const TEMPLATES: QueryTemplate[] = [
   {
     id: "tvl-uniswap",
     name: "TVL over time — Uniswap v3",
-    description: "Daily total value locked across all Uniswap v3 pools, most recent N days.",
+    description: "Daily total value locked across all Uniswap v3 mainnet pools, most recent N days.",
     chartType: "line",
     price: TIERS.multi_field.price, // full time-series, costlier than a snapshot
-    protocolKeyword: "uniswap v3",
+    pinnedSubgraphId: "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
     buildQuery: (params) => ({
       query: `query TvlOverTime($days: Int!) {
         uniswapDayDatas(first: $days, orderBy: date, orderDirection: desc) {
@@ -62,15 +77,15 @@ export const TEMPLATES: QueryTemplate[] = [
         seriesLabel: "TVL (USD)",
       };
     },
-    verified: false,
+    verified: true,
   },
   {
     id: "swap-volume-pools",
     name: "Swap volume by pool — Uniswap v3",
-    description: "Top pools ranked by all-time swap volume (current snapshot, not historical).",
+    description: "Top Uniswap v3 mainnet pools ranked by all-time swap volume (current snapshot, not historical).",
     chartType: "bar",
     price: TIERS.simple.price, // current-snapshot lookup, cheaper than a time-series
-    protocolKeyword: "uniswap v3",
+    pinnedSubgraphId: "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
     buildQuery: (params) => ({
       query: `query TopPools($limit: Int!) {
         pools(first: $limit, orderBy: volumeUSD, orderDirection: desc) {
@@ -94,60 +109,7 @@ export const TEMPLATES: QueryTemplate[] = [
         seriesLabel: "Volume (USD)",
       };
     },
-    verified: false,
-  },
-  {
-    id: "daily-transfer-volume",
-    name: "Daily transfer volume — named token",
-    description: "Daily count of Transfer events for a token, most recent N days. Schema varies by which community subgraph indexed the token — unverified.",
-    chartType: "line",
-    price: TIERS.multi_field.price,
-    protocolKeyword: "USDC token transfers",
-    buildQuery: (params) => ({
-      query: `query DailyTransfers($days: Int!) {
-        tokenDayDatas(first: $days, orderBy: date, orderDirection: desc) {
-          date
-          dailyTxns
-        }
-      }`,
-      variables: { days: Number(params.days ?? 30) },
-    }),
-    transform: (raw) => {
-      const rows = extractRows(raw, "tokenDayDatas") as Array<{ date: number; dailyTxns: string }>;
-      const sorted = [...rows].sort((a, b) => a.date - b.date);
-      return {
-        labels: sorted.map((r) => new Date(r.date * 1000).toISOString().slice(0, 10)),
-        values: sorted.map((r) => Number(r.dailyTxns)),
-        seriesLabel: "Transfers/day",
-      };
-    },
-    verified: false,
-  },
-  {
-    id: "top-holders",
-    name: "Top holders — named token",
-    description: "Largest current holders of a token by balance. Holder-level schemas are the least standardized across subgraphs — unverified.",
-    chartType: "bar",
-    price: TIERS.simple.price,
-    protocolKeyword: "token holders",
-    buildQuery: (params) => ({
-      query: `query TopHolders($limit: Int!) {
-        accountBalances(first: $limit, orderBy: amount, orderDirection: desc) {
-          account { id }
-          amount
-        }
-      }`,
-      variables: { limit: Number(params.limit ?? 10) },
-    }),
-    transform: (raw) => {
-      const rows = extractRows(raw, "accountBalances") as Array<{ account: { id: string }; amount: string }>;
-      return {
-        labels: rows.map((r) => `${r.account.id.slice(0, 6)}…${r.account.id.slice(-4)}`),
-        values: rows.map((r) => Number(r.amount)),
-        seriesLabel: "Balance",
-      };
-    },
-    verified: false,
+    verified: true,
   },
 ];
 

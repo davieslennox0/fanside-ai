@@ -1,5 +1,11 @@
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
+// openai/gpt-oss-20b: smaller/faster than the larger openai/gpt-oss-120b
+// model used elsewhere, so higher effective throughput under this key's
+// rate limits — matters here since every paid query makes two Groq calls
+// (query generation + synthesis). Note: llama-3.1 isn't in this Groq key's
+// model catalog (confirmed via GET /v1/models) — this account's available
+// chat models are the qwen3/gpt-oss/allam/compound families, no meta-llama.
+const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-20b";
 
 if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY is not set");
 

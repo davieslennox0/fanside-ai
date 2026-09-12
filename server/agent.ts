@@ -1,4 +1,4 @@
-import { pickBestSubgraph, getSchemaBySubgraphId, executeQueryBySubgraphId } from "./mcpClient.js";
+import { resolveWorkingSubgraph, getSchemaBySubgraphId, executeQueryBySubgraphId, displayNameOf } from "./mcpClient.js";
 import { generateGraphQLQuery, synthesizeAnswer } from "./synth.js";
 import { classifyComplexity, type TierInfo } from "./pricing.js";
 
@@ -47,18 +47,17 @@ export async function answerQuestion(question: string): Promise<AnswerResult> {
   const rawResults: unknown[] = [];
 
   for (const keyword of keywords) {
-    const { candidate } = await pickBestSubgraph(keyword);
-    const subgraphId = candidate.id;
-    const name = candidate.displayName ?? candidate.id;
+    const { candidate, result: attemptResult } = await resolveWorkingSubgraph(keyword, async (c) => {
+      const schema = await getSchemaBySubgraphId(c.id);
+      const sdl = schemaToSdl(schema);
+      const { query, variables } = await generateGraphQLQuery(question, sdl);
+      const result = await executeQueryBySubgraphId(c.id, query, variables);
+      return { query, result };
+    });
 
-    const schema = await getSchemaBySubgraphId(subgraphId);
-    const sdl = schemaToSdl(schema);
-
-    const { query, variables } = await generateGraphQLQuery(question, sdl);
-    const result = await executeQueryBySubgraphId(subgraphId, query, variables);
-
-    subgraphsUsed.push({ name, id: subgraphId });
-    rawResults.push({ subgraph: name, query, result });
+    const name = displayNameOf(candidate);
+    subgraphsUsed.push({ name, id: candidate.id });
+    rawResults.push({ subgraph: name, query: attemptResult.query, result: attemptResult.result });
   }
 
   const answer = await synthesizeAnswer({ question, subgraphsUsed, rawResults });
