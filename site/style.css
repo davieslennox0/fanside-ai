@@ -168,6 +168,58 @@ th, td {
 }
 th { color: var(--text-dim); font-weight: 600; }
 
+/* Dune-style dense widget grid: independent, self-contained cards. */
+.widget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 18px;
+  margin: 20px 0 40px;
+}
+
+.widget-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.widget-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.widget-head h3 { margin: 0; font-size: 0.95rem; }
+
+.widget-updated {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.widget-desc {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin: -4px 0 0;
+}
+
+.widget-table td, .widget-table th { padding: 6px 8px; font-size: 0.8rem; }
+.widget-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.widget-error {
+  color: var(--danger);
+  font-size: 0.82rem;
+}
+
 code, pre {
   background: #0e1120;
   border: 1px solid var(--panel-border);

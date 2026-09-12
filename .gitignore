@@ -8,4 +8,5 @@ dist/
 .DS_Store
 activity.json
 template-results.json
+widget-results.json
 output/

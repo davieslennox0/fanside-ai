@@ -11,6 +11,7 @@ import { logActivity, getActivity, getStats } from "./activity.js";
 import { TEMPLATES } from "./templates.js";
 import { runTemplate } from "./templateRunner.js";
 import { saveTemplateResult, getLatestResults } from "./templateResults.js";
+import { getWidgets, startWidgetRefreshLoop } from "./widgetStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4050);
@@ -151,6 +152,14 @@ app.get("/api/activity", async (_req, res) => {
   res.json(await getActivity());
 });
 
+// Dashboard widgets — refreshed on a 30-min server-side interval by
+// widgetStore.ts calling the Subgraph MCP directly. No x402 payment, no
+// wallet, no USDC anywhere in this path; that stays scoped to /api/ask,
+// /api/agent/query and /api/template/:id.
+app.get("/api/widgets", async (_req, res) => {
+  res.json(await getWidgets());
+});
+
 app.get("/api/config", (_req, res) => {
   res.json({
     domain: DOMAIN_NAME,
@@ -169,3 +178,5 @@ app.use(express.static(path.join(__dirname, "..", "site")));
 app.listen(PORT, () => {
   console.log(`fanside-ai listening on :${PORT} (domain: ${DOMAIN_NAME}, network: ${NETWORK}, seller: ${sellerAddress})`);
 });
+
+startWidgetRefreshLoop();
